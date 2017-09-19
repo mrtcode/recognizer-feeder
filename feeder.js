@@ -72,7 +72,9 @@ function streamShard(connectionInfo, shardDateFrom) {
 				let sql = `
 				SELECT I.itemID, ID_Title.value AS title,
 				(
-				   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName) SEPARATOR '\\n')
+				   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName)
+				                       ORDER BY IC.orderIndex
+				                       SEPARATOR '\\n')
 				   FROM creators JOIN itemCreators IC USING (creatorID)
 				   WHERE IC.itemID=I.itemID
 				) AS authors,
