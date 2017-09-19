@@ -48,9 +48,6 @@ async function setShardDate(db, shardID, shardDate) {
 }
 
 function index(batch, callback) {
-	//console.log(JSON.stringify(batch));
-//	console.log(batch);
-//	 callback();
 	if (!batch.length) return callback();
 	request({
 		url: config.indexerURL,
@@ -74,7 +71,7 @@ function streamShard(connectionInfo, shardDateFrom) {
 				
 				let sql = `
 				SELECT I.itemID, ID_Title.value AS title,
-	       (
+				(
 				   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName) SEPARATOR '\\n')
 				   FROM creators JOIN itemCreators IC USING (creatorID)
 				   WHERE IC.itemID=I.itemID
@@ -105,7 +102,7 @@ function streamShard(connectionInfo, shardDateFrom) {
 				let batch = [];
 				
 				connection.query(sql, [shardDateFrom, shardDateFrom])
-					.stream({highWaterMark: 100000})
+					.stream({highWaterMark: 10000})
 					.pipe(through2({objectMode: true}, function (row, enc, next) {
 						
 						if (!row.authors) return next();
@@ -142,7 +139,7 @@ function streamShard(connectionInfo, shardDateFrom) {
 						if (row.isbn) identifiers.push('isbn:' + row.isbn);
 						if (pmid) identifiers.push('pmid:' + pmid);
 						if (pmcid) identifiers.push('pmcid:' + pmcid);
-						identifiers = identifiers.join(',');
+						identifiers = identifiers.join('\n');
 						
 						let year = null;
 						
