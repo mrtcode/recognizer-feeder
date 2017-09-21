@@ -72,7 +72,7 @@ function streamShard(connectionInfo, shardDateFrom) {
 				if (err) return reject(err);
 				
 				let sql = `
-					SELECT I.itemID, ID_Title.value AS title,
+					(SELECT I.itemID, ID_Title.value AS title,
 					(
 					   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName)
 					                       ORDER BY IC.orderIndex
@@ -97,9 +97,38 @@ function streamShard(connectionInfo, shardDateFrom) {
 					LEFT JOIN itemData ID_Extra ON (ID_Extra.itemID = I.itemID AND ID_Extra.fieldID=22)
 					LEFT JOIN itemAttachments IA ON (IA.sourceItemID = I.itemID AND IA.mimeType = 'application/pdf' AND IA.storageHash IS NOT NULL)
 					LEFT JOIN items IAI ON (IAI.itemID = IA.itemID)
-					WHERE (I.serverDateModified >= ? OR IAI.serverDateModified >= ?)
-					AND I.itemTypeID NOT IN (1,14)
-					GROUP BY I.itemID
+					WHERE I.serverDateModified >= ?
+					AND I.itemTypeID NOT IN (1,14) GROUP BY I.itemID)
+					
+					UNION
+					
+					(SELECT I.itemID, ID_Title.value AS title,
+					(
+					   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName)
+					                       ORDER BY IC.orderIndex
+					                       SEPARATOR '\\n')
+					   FROM creators JOIN itemCreators IC USING (creatorID)
+					   WHERE IC.itemID=I.itemID
+					) AS authors,
+					ID_Abstract.value AS abstract,
+					ID_Date.value AS date,
+					ID_DOI.value AS doi,
+					ID_ISBN.value AS isbn,
+					ID_Extra.value AS extra,
+					IA.storageHash,
+					I.serverDateModified AS shardDate1,
+					IAI.serverDateModified AS shardDate2
+					FROM items I
+					JOIN itemData ID_Title ON (ID_Title.itemID = I.itemID AND ID_Title.fieldID IN (110,111,112,113))
+					LEFT JOIN itemData ID_Abstract ON (ID_Abstract.itemID = I.itemID AND ID_Abstract.fieldID=90)
+					LEFT JOIN itemData ID_Date ON (ID_Date.itemID = I.itemID AND ID_Date.fieldID=14)
+					LEFT JOIN itemData ID_DOI ON (ID_DOI.itemID = I.itemID AND ID_DOI.fieldID=26)
+					LEFT JOIN itemData ID_ISBN ON (ID_ISBN.itemID = I.itemID AND ID_ISBN.fieldID=11)
+					LEFT JOIN itemData ID_Extra ON (ID_Extra.itemID = I.itemID AND ID_Extra.fieldID=22)
+					LEFT JOIN itemAttachments IA ON (IA.sourceItemID = I.itemID AND IA.mimeType = 'application/pdf' AND IA.storageHash IS NOT NULL)
+					LEFT JOIN items IAI ON (IAI.itemID = IA.itemID)
+					WHERE IAI.serverDateModified >= ?
+					AND I.itemTypeID NOT IN (1,14) GROUP BY I.itemID);
 				`;
 				
 				let shardDate = new Date(0).toISOString();
