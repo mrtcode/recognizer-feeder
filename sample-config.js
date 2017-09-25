@@ -3,5 +3,6 @@ module.exports = {
 	masterUser: '',
 	masterPassword: '',
 	masterDatabase: '',
-	indexerURL: 'http://localhost:8003/index'
+	indexerURL: 'http://localhost:8003/index',
+	workers: 1
 };

@@ -36,6 +36,10 @@ let currentShardID = 0;
 let failedShards = 0;
 let done = false;
 
+let shardRows;
+let shardRowNr = 0;
+let activeWorkers = 0;
+
 async function getShardDate(db, shardID) {
 	let row = await db.get('SELECT shardDate FROM shards WHERE shardID = ?', [shardID]);
 	if (!row) return new Date(0).toISOString();
@@ -71,75 +75,114 @@ function streamShard(connectionInfo, shardDateFrom) {
 			connection.query("SET SESSION group_concat_max_len = 2048", function (err) {
 				if (err) return reject(err);
 				
-				let sql = `
-					(SELECT I.itemID, ID_Title.value AS title,
-					(
-					   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName)
-					                       ORDER BY IC.orderIndex
-					                       SEPARATOR '\\n')
-					   FROM creators JOIN itemCreators IC USING (creatorID)
-					   WHERE IC.itemID=I.itemID
-					) AS authors,
-					ID_Abstract.value AS abstract,
-					ID_Date.value AS date,
-					ID_DOI.value AS doi,
-					ID_ISBN.value AS isbn,
-					ID_Extra.value AS extra,
-					IA.storageHash,
-					I.serverDateModified AS shardDate1,
-					IAI.serverDateModified AS shardDate2
-					FROM items I
-					JOIN itemData ID_Title ON (ID_Title.itemID = I.itemID AND ID_Title.fieldID IN (110,111,112,113))
-					LEFT JOIN itemData ID_Abstract ON (ID_Abstract.itemID = I.itemID AND ID_Abstract.fieldID=90)
-					LEFT JOIN itemData ID_Date ON (ID_Date.itemID = I.itemID AND ID_Date.fieldID=14)
-					LEFT JOIN itemData ID_DOI ON (ID_DOI.itemID = I.itemID AND ID_DOI.fieldID=26)
-					LEFT JOIN itemData ID_ISBN ON (ID_ISBN.itemID = I.itemID AND ID_ISBN.fieldID=11)
-					LEFT JOIN itemData ID_Extra ON (ID_Extra.itemID = I.itemID AND ID_Extra.fieldID=22)
-					LEFT JOIN itemAttachments IA ON (IA.sourceItemID = I.itemID AND IA.mimeType = 'application/pdf' AND IA.storageHash IS NOT NULL)
-					LEFT JOIN items IAI ON (IAI.itemID = IA.itemID)
-					WHERE I.serverDateModified >= ?
-					AND I.itemTypeID NOT IN (1,14) GROUP BY I.itemID)
-					
-					UNION
-					
-					(SELECT I.itemID, ID_Title.value AS title,
-					(
-					   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName)
-					                       ORDER BY IC.orderIndex
-					                       SEPARATOR '\\n')
-					   FROM creators JOIN itemCreators IC USING (creatorID)
-					   WHERE IC.itemID=I.itemID
-					) AS authors,
-					ID_Abstract.value AS abstract,
-					ID_Date.value AS date,
-					ID_DOI.value AS doi,
-					ID_ISBN.value AS isbn,
-					ID_Extra.value AS extra,
-					IA.storageHash,
-					I.serverDateModified AS shardDate1,
-					IAI.serverDateModified AS shardDate2
-					FROM items I
-					JOIN itemData ID_Title ON (ID_Title.itemID = I.itemID AND ID_Title.fieldID IN (110,111,112,113))
-					LEFT JOIN itemData ID_Abstract ON (ID_Abstract.itemID = I.itemID AND ID_Abstract.fieldID=90)
-					LEFT JOIN itemData ID_Date ON (ID_Date.itemID = I.itemID AND ID_Date.fieldID=14)
-					LEFT JOIN itemData ID_DOI ON (ID_DOI.itemID = I.itemID AND ID_DOI.fieldID=26)
-					LEFT JOIN itemData ID_ISBN ON (ID_ISBN.itemID = I.itemID AND ID_ISBN.fieldID=11)
-					LEFT JOIN itemData ID_Extra ON (ID_Extra.itemID = I.itemID AND ID_Extra.fieldID=22)
-					LEFT JOIN itemAttachments IA ON (IA.sourceItemID = I.itemID AND IA.mimeType = 'application/pdf' AND IA.storageHash IS NOT NULL)
-					LEFT JOIN items IAI ON (IAI.itemID = IA.itemID)
-					WHERE IAI.serverDateModified >= ?
-					AND I.itemTypeID NOT IN (1,14) GROUP BY I.itemID);
-				`;
+				let shardDate = new Date(0).toISOString(); // 1970-01-01T00:00:00.000Z
+				let sql;
+				let params;
 				
-				let shardDate = new Date(0).toISOString();
+				if (shardDateFrom > shardDate) {
+					sql = `
+						(SELECT I.itemID, ID_Title.value AS title,
+						(
+						   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName)
+						                       ORDER BY IC.orderIndex
+						                       SEPARATOR '\\n')
+						   FROM creators JOIN itemCreators IC USING (creatorID)
+						   WHERE IC.itemID=I.itemID
+						) AS authors,
+						ID_Abstract.value AS abstract,
+						ID_Date.value AS date,
+						ID_DOI.value AS doi,
+						ID_ISBN.value AS isbn,
+						ID_Extra.value AS extra,
+						IA.storageHash,
+						I.serverDateModified AS shardDate1,
+						IAI.serverDateModified AS shardDate2
+						FROM items I
+						JOIN itemData ID_Title ON (ID_Title.itemID = I.itemID AND ID_Title.fieldID IN (110,111,112,113))
+						LEFT JOIN itemData ID_Abstract ON (ID_Abstract.itemID = I.itemID AND ID_Abstract.fieldID=90)
+						LEFT JOIN itemData ID_Date ON (ID_Date.itemID = I.itemID AND ID_Date.fieldID=14)
+						LEFT JOIN itemData ID_DOI ON (ID_DOI.itemID = I.itemID AND ID_DOI.fieldID=26)
+						LEFT JOIN itemData ID_ISBN ON (ID_ISBN.itemID = I.itemID AND ID_ISBN.fieldID=11)
+						LEFT JOIN itemData ID_Extra ON (ID_Extra.itemID = I.itemID AND ID_Extra.fieldID=22)
+						LEFT JOIN itemAttachments IA ON (IA.sourceItemID = I.itemID AND IA.mimeType = 'application/pdf' AND IA.storageHash IS NOT NULL)
+						LEFT JOIN items IAI ON (IAI.itemID = IA.itemID)
+						WHERE I.serverDateModified >= ?
+						AND I.itemTypeID NOT IN (1,14)
+						GROUP BY I.itemID)
+						
+						UNION
+						
+						(SELECT I.itemID, ID_Title.value AS title,
+						(
+						   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName)
+						                       ORDER BY IC.orderIndex
+						                       SEPARATOR '\\n')
+						   FROM creators JOIN itemCreators IC USING (creatorID)
+						   WHERE IC.itemID=I.itemID
+						) AS authors,
+						ID_Abstract.value AS abstract,
+						ID_Date.value AS date,
+						ID_DOI.value AS doi,
+						ID_ISBN.value AS isbn,
+						ID_Extra.value AS extra,
+						IA.storageHash,
+						I.serverDateModified AS shardDate1,
+						IAI.serverDateModified AS shardDate2
+						FROM items I
+						JOIN itemData ID_Title ON (ID_Title.itemID = I.itemID AND ID_Title.fieldID IN (110,111,112,113))
+						LEFT JOIN itemData ID_Abstract ON (ID_Abstract.itemID = I.itemID AND ID_Abstract.fieldID=90)
+						LEFT JOIN itemData ID_Date ON (ID_Date.itemID = I.itemID AND ID_Date.fieldID=14)
+						LEFT JOIN itemData ID_DOI ON (ID_DOI.itemID = I.itemID AND ID_DOI.fieldID=26)
+						LEFT JOIN itemData ID_ISBN ON (ID_ISBN.itemID = I.itemID AND ID_ISBN.fieldID=11)
+						LEFT JOIN itemData ID_Extra ON (ID_Extra.itemID = I.itemID AND ID_Extra.fieldID=22)
+						LEFT JOIN itemAttachments IA ON (IA.sourceItemID = I.itemID AND IA.mimeType = 'application/pdf' AND IA.storageHash IS NOT NULL)
+						LEFT JOIN items IAI ON (IAI.itemID = IA.itemID)
+						WHERE IAI.serverDateModified >= ?
+						AND I.itemTypeID NOT IN (1,14)
+						GROUP BY I.itemID);
+					`;
+					params = [shardDateFrom, shardDateFrom];
+				}
+				else {
+					sql = `
+						(SELECT I.itemID, ID_Title.value AS title,
+						(
+						   SELECT GROUP_CONCAT(CONCAT(creators.firstName, '\\t', creators.lastName)
+						                       ORDER BY IC.orderIndex
+						                       SEPARATOR '\\n')
+						   FROM creators JOIN itemCreators IC USING (creatorID)
+						   WHERE IC.itemID=I.itemID
+						) AS authors,
+						ID_Abstract.value AS abstract,
+						ID_Date.value AS date,
+						ID_DOI.value AS doi,
+						ID_ISBN.value AS isbn,
+						ID_Extra.value AS extra,
+						IA.storageHash,
+						I.serverDateModified AS shardDate1,
+						IAI.serverDateModified AS shardDate2
+						FROM items I
+						JOIN itemData ID_Title ON (ID_Title.itemID = I.itemID AND ID_Title.fieldID IN (110,111,112,113))
+						LEFT JOIN itemData ID_Abstract ON (ID_Abstract.itemID = I.itemID AND ID_Abstract.fieldID=90)
+						LEFT JOIN itemData ID_Date ON (ID_Date.itemID = I.itemID AND ID_Date.fieldID=14)
+						LEFT JOIN itemData ID_DOI ON (ID_DOI.itemID = I.itemID AND ID_DOI.fieldID=26)
+						LEFT JOIN itemData ID_ISBN ON (ID_ISBN.itemID = I.itemID AND ID_ISBN.fieldID=11)
+						LEFT JOIN itemData ID_Extra ON (ID_Extra.itemID = I.itemID AND ID_Extra.fieldID=22)
+						LEFT JOIN itemAttachments IA ON (IA.sourceItemID = I.itemID AND IA.mimeType = 'application/pdf' AND IA.storageHash IS NOT NULL)
+						LEFT JOIN items IAI ON (IAI.itemID = IA.itemID)
+						AND I.itemTypeID NOT IN (1,14)
+						GROUP BY I.itemID)
+					`;
+					params = [];
+				}
+				
 				let batch = [];
 				
-				connection.query(sql, [shardDateFrom, shardDateFrom])
+				connection.query(sql, params)
 					.stream({highWaterMark: 10000})
 					.pipe(through2({objectMode: true}, function (row, enc, next) {
 						
 						if (!row.authors) return next();
-						
 						
 						if (row.shardDate1 && row.shardDate1.toISOString() > shardDate) {
 							shardDate = row.shardDate1.toISOString();
@@ -148,7 +191,6 @@ function streamShard(connectionInfo, shardDateFrom) {
 						if (row.shardDate2 && row.shardDate2.toISOString() > shardDate) {
 							shardDate = row.shardDate2.toISOString();
 						}
-						
 						
 						let pmid = null;
 						let pmcid = null;
@@ -192,7 +234,7 @@ function streamShard(connectionInfo, shardDateFrom) {
 							hash: row.storageHash || undefined
 						});
 						
-						if (batch.length >= 500) {
+						if (batch.length >= 100) {
 							index(batch, function (err) {
 								connection.close();
 								if (err) return reject(err);
@@ -221,26 +263,14 @@ function streamShard(connectionInfo, shardDateFrom) {
 	});
 }
 
-async function main() {
-	console.time("total time");
+async function worker(nr, db) {
+	activeWorkers++;
+	console.log('worker(' + nr + ') started');
 	
-	let db = await sqlite.open('./db.sqlite', {Promise});
-	await db.run("CREATE TABLE IF NOT EXISTS shards (shardID INTEGER PRIMARY KEY, shardDate TEXT)");
-	
-	let master = await mysql2Promise.createConnection({
-		host: config.masterHost,
-		user: config.masterUser,
-		password: config.masterPassword,
-		database: config.masterDatabase
-	});
-	
-	let [shardRows] = await master.execute(
-		"SELECT * FROM shards AS s LEFT JOIN shardHosts AS sh USING(shardHostID) WHERE s.state = 'up' AND sh.state = 'up' ORDER BY shardID"
-	);
-	master.close();
-	
-	for (let i = 0; i < shardRows.length; i++) {
-		let shardRow = shardRows[i];
+	while (shardRowNr < shardRows.length) {
+		let shardRow = shardRows[shardRowNr++];
+		
+		console.log('worker(' + nr + ') taking shard ' + shardRow.shardID);
 		
 		try {
 			currentShardID = shardRow.shardID;
@@ -261,6 +291,34 @@ async function main() {
 			console.log(err);
 		}
 	}
+	activeWorkers--;
+	console.log('worker(' + nr + ') finished');
+}
+
+async function main() {
+	console.time("total time");
+	
+	let db = await sqlite.open('./db.sqlite', {Promise});
+	await db.run("CREATE TABLE IF NOT EXISTS shards (shardID INTEGER PRIMARY KEY, shardDate TEXT)");
+	
+	let master = await mysql2Promise.createConnection({
+		host: config.masterHost,
+		user: config.masterUser,
+		password: config.masterPassword,
+		database: config.masterDatabase
+	});
+	
+	[shardRows] = await master.execute(
+		"SELECT * FROM shards AS s LEFT JOIN shardHosts AS sh USING(shardHostID) WHERE s.state = 'up' AND sh.state = 'up' ORDER BY shardID"
+	);
+	master.close();
+	
+	let workers = [];
+	for (let i = 1; i <= config.workers; i++) {
+		workers.push(worker(i, db));
+	}
+	
+	await Promise.all(workers);
 	
 	await db.close();
 	console.timeEnd("total time");
@@ -269,7 +327,7 @@ async function main() {
 
 setInterval(function () {
 	indexedTotal += indexed;
-	console.log('current shard: ' + currentShardID + ', failed shards: ' + failedShards + ', indexed total: ' + indexedTotal + ', indexed per second: ' + Math.floor(indexed / 1));
+	console.log('active workers: ' + activeWorkers + ', last shard: ' + currentShardID + ', failed shards: ' + failedShards + ', indexed total: ' + indexedTotal + ', indexed per second: ' + Math.floor(indexed / 1));
 	indexed = 0;
 	if (done) {
 		process.exit(0);
